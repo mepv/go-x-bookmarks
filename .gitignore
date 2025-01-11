@@ -1,0 +1,6 @@
+.idea/
+.env
+main
+/coverage/
+coverage.out
+coverage.html
