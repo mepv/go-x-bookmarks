@@ -11,32 +11,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"sync"
 )
 
-const oauthPrefix = "/api/v1/bookmarks/oauth/"
-
 var pkceStorage = sync.Map{}
 
-func AuthorizeHandler(w http.ResponseWriter, r *http.Request) {
-	if !strings.HasPrefix(r.URL.Path, oauthPrefix) {
-		http.NotFound(w, r)
-		return
-	}
-	subPath := strings.TrimPrefix(r.URL.Path, oauthPrefix)
-
-	switch subPath {
-	case "authorize":
-		buildAuthorizationUrl(w, r)
-	case "callback":
-		exchangeCodeForToken(w, r)
-	default:
-		http.NotFound(w, r)
-	}
-}
-
-func buildAuthorizationUrl(w http.ResponseWriter, r *http.Request) {
+func BuildAuthorizationUrl(w http.ResponseWriter, r *http.Request) {
 	authorizationUri := os.Getenv("AUTHORIZATION_URI")
 	u, err := url.Parse(authorizationUri)
 	if err != nil {
@@ -69,7 +49,7 @@ func buildAuthorizationUrl(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Building and redirecting to authorization URL")
 }
 
-func exchangeCodeForToken(w http.ResponseWriter, r *http.Request) {
+func ExchangeCodeForToken(w http.ResponseWriter, r *http.Request) {
 	tokenUri := os.Getenv("TOKEN_URI")
 	clientId := os.Getenv("CLIENT_ID")
 	clientSecret := os.Getenv("CLIENT_SECRET")
@@ -122,10 +102,26 @@ func exchangeCodeForToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("Non-OK HTTP status: %s, response: %s", resp.Status, string(body))
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		// Attempt to parse error details from the response
+		var errResp map[string]interface{}
+		if err := json.Unmarshal(body, &errResp); err != nil {
+			log.Printf("Error parsing error response: %v", err)
+			http.Error(w, "Authorization failed", http.StatusUnauthorized)
+			return
+		}
+
+		// Respond with the error message from the token endpoint
+		errorMessage, exists := errResp["error_description"].(string)
+		if !exists {
+			errorMessage = "Authorization failed"
+		}
+
+		http.Error(w, errorMessage, http.StatusUnauthorized)
+		log.Printf("Token request failed: %s", errorMessage)
+		return
 	}
 
+	//todo: change to a custom page and redirect to it. The page to start interacting with the API, and display a message saying "Success"
 	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode("Success")
 	log.Print("Successful exchanged code for access token")

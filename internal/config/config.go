@@ -1,8 +1,21 @@
 package config
 
-import "os"
+import (
+	"github.com/alexedwards/scs/v2"
+	"log"
+	"os"
+)
 
-type Config struct {
+type AppConfig struct {
+	UseCache bool
+	//TemplateCache map[string]*template.Template
+	InfoLog      *log.Logger
+	ErrorLog     *log.Logger
+	InProduction bool
+	Session      *scs.SessionManager
+}
+
+type EnvConfig struct {
 	ClientId         string
 	ClientSecret     string
 	RedirectUri      string
@@ -11,8 +24,8 @@ type Config struct {
 	Scope            string
 }
 
-func NewConfig() *Config {
-	return &Config{
+func NewEnvConfig() *EnvConfig {
+	return &EnvConfig{
 		ClientId:         getEnv("CLIENT_ID", ""),
 		ClientSecret:     getEnv("CLIENT_SECRET", ""),
 		RedirectUri:      getEnv("REDIRECT_URI", ""),
