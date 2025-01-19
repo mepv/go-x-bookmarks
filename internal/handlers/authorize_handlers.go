@@ -5,6 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"github.com/google/uuid"
+	"github.com/mepv/go-x-bookmarks/internal/config"
+	"github.com/mepv/go-x-bookmarks/internal/helpers"
+	"github.com/mepv/go-x-bookmarks/internal/models"
+	"github.com/mepv/go-x-bookmarks/internal/render"
 	"github.com/mepv/go-x-bookmarks/internal/util"
 	"io"
 	"log"
@@ -12,28 +16,41 @@ import (
 	"net/url"
 	"os"
 	"sync"
+	"time"
 )
 
+const accessTokenNotFound = "Access token not found. Please signup again."
+
 var pkceStorage = sync.Map{}
+
+func NewAuthorizationHandlers(a *config.AppConfig) {
+	app = a
+}
 
 func BuildAuthorizationUrl(w http.ResponseWriter, r *http.Request) {
 	authorizationUri := os.Getenv("AUTHORIZATION_URI")
 	u, err := url.Parse(authorizationUri)
 	if err != nil {
 		log.Printf("Error parsing authorization url: %v", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		helpers.ServerError(w, err)
 		return
 	}
 
 	codeVerifier, err := util.GenerateCodeVerifier()
 	if err != nil {
 		log.Printf("Error generating code verifier: %v", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		helpers.ServerError(w, err)
 		return
 	}
 	codeChallenge := util.GenerateCodeChallenge(codeVerifier)
 	state := uuid.New().String()
-	storePKCE(state, codeVerifier)
+
+	err = app.Session.Store.Commit(state, []byte(codeVerifier), time.Now().Add(12*time.Hour))
+	if err != nil {
+		log.Printf("Error committing state in session: %v", err)
+		helpers.ServerError(w, err)
+		return
+	}
 
 	params := url.Values{}
 	params.Add("response_type", "code")
@@ -55,7 +72,16 @@ func ExchangeCodeForToken(w http.ResponseWriter, r *http.Request) {
 	clientSecret := os.Getenv("CLIENT_SECRET")
 	queryParams := r.URL.Query()
 
-	codeVerifier, _ := retrievePKCE(queryParams.Get("state"))
+	state := queryParams.Get("state")
+	codeVerifierData, _, err := app.Session.Store.Find(state)
+	err = app.Session.Store.Delete(state)
+	if err != nil {
+		log.Printf("Error deleting state from session: %v", err)
+		helpers.ServerError(w, err)
+		return
+	}
+
+	codeVerifier := string(codeVerifierData)
 	if codeVerifier == "" {
 		log.Printf("No code verifier found")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -73,7 +99,7 @@ func ExchangeCodeForToken(w http.ResponseWriter, r *http.Request) {
 	req, err := http.NewRequest("POST", tokenUri, bytes.NewBufferString(params.Encode()))
 	if err != nil {
 		log.Printf("Error creating request: %v", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		helpers.ServerError(w, err)
 		return
 	}
 
@@ -84,7 +110,7 @@ func ExchangeCodeForToken(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("Error exchanging code for token: %v", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		helpers.ServerError(w, err)
 		return
 	}
 	defer func(Body io.ReadCloser) {
@@ -97,7 +123,7 @@ func ExchangeCodeForToken(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("Error reading response body: %v", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		helpers.ServerError(w, err)
 		return
 	}
 
@@ -121,19 +147,27 @@ func ExchangeCodeForToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//todo: change to a custom page and redirect to it. The page to start interacting with the API, and display a message saying "Success"
-	w.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w).Encode("Success")
 	log.Print("Successful exchanged code for access token")
-}
 
-func storePKCE(state string, codeVerifier string) {
-	pkceStorage.Store(state, codeVerifier)
-}
+	var tokenResp models.TokenResponse
+	err = json.Unmarshal(body, &tokenResp)
+	if err != nil {
+		log.Printf("failed to decode token response: %v", err)
+		helpers.ServerError(w, err)
+		return
+	}
+	app.Session.Put(r.Context(), "access_token", tokenResp.AccessToken)
 
-func retrievePKCE(state string) (string, bool) {
-	var pkce, _ = pkceStorage.LoadAndDelete(state)
-	return pkce.(string), true
+	data := make(map[string]interface{})
+	data["success"] = "Success"
+	err = render.Template(w, r, "user.page.gohtml", &models.TemplateData{
+		Data: data,
+	})
+	if err != nil {
+		log.Printf("Error rendering template: %v", err)
+		helpers.ServerError(w, err)
+		return
+	}
 }
 
 func encodeCredentials(clientId, clientSecret string) string {

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Enter Username</title>
+</head>
+<body>
+{{$success := index .Data "success"}}
+<h1>{{$success}}</h1>
+<h1>Enter Your Username</h1>
+<form action="/bookmarks" method="POST">
+    <label for="username">Username:</label>
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    <input type="text" id="username" name="username" required>
+    <button type="submit">Fetch Bookmarks</button>
+</form>
+</body>
+</html>

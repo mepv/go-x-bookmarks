@@ -14,9 +14,10 @@ func routes(app *config.AppConfig) http.Handler {
 	mux.Use(NoSurf)
 	mux.Use(SessionLoad)
 
-	mux.Get("/api/v1/bookmarks/oauth/authorize", handlers.BuildAuthorizationUrl)
-	mux.Get("/api/v1/bookmarks/oauth/callback", handlers.ExchangeCodeForToken)
-	mux.Get("/api/v1/bookmarks/users/{username}", handlers.UserHandler)
+	mux.Get("/", handlers.HomeHandler)
+	mux.Get("/bookmarks/oauth/authorize", handlers.BuildAuthorizationUrl)
+	mux.Get("/bookmarks/oauth/callback", handlers.ExchangeCodeForToken)
+	mux.Post("/bookmarks", handlers.BookmarkHandler)
 
 	return mux
 }
