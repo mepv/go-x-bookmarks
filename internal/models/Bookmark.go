@@ -5,3 +5,13 @@ type Bookmark struct {
 	Text                string   `json:"text"`
 	ID                  string   `json:"id"`
 }
+
+type BookmarksResponse struct {
+	Data []Bookmark `json:"data"`
+	Meta Meta       `json:"meta"`
+}
+
+type Meta struct {
+	ResultCount int `json:"result_count"`
+	//todo: add next_token and previous_token
+}

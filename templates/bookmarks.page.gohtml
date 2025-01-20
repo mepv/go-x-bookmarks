@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Your Bookmarks</title>
+</head>
+<body>
+{{$username := index .Data "username"}}
+<h1>Bookmarks for {{$username}}</h1>
+<ul>
+    {{$bookmarks := index .Data "bookmarks"}}
+    {{range $bookmarks}}
+        <li>
+            <strong>{{.Text}}</strong>
+            <br>
+        </li>
+    {{else}}
+        <li>No bookmarks found.</li>
+    {{end}}
+</ul>
+</body>
+</html>

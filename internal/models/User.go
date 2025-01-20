@@ -5,3 +5,7 @@ type User struct {
 	Name     string `json:"name"`
 	Username string `json:"username"`
 }
+
+type UserResponse struct {
+	Data User `json:"data"`
+}

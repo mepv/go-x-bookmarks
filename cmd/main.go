@@ -6,8 +6,10 @@ import (
 	"github.com/alexedwards/scs/v2"
 	"github.com/joho/godotenv"
 	"github.com/mepv/go-x-bookmarks/internal/config"
+	"github.com/mepv/go-x-bookmarks/internal/handlers"
 	"github.com/mepv/go-x-bookmarks/internal/helpers"
 	"github.com/mepv/go-x-bookmarks/internal/models"
+	"github.com/mepv/go-x-bookmarks/internal/render"
 	"log"
 	"net/http"
 	"os"
@@ -22,7 +24,6 @@ var infoLog *log.Logger
 var errorLog *log.Logger
 
 func main() {
-
 	// Setup
 	err := run()
 	if err != nil {
@@ -56,12 +57,13 @@ func run() error {
 	useCache := flag.Bool("cache", true, "Use template cache")
 	flag.Parse()
 
+	// change this to true when in production
 	app.InProduction = *inProductionMode
 	app.UseCache = *useCache
 
 	infoLog = log.New(os.Stdout, "INFO\t", log.Ldate|log.Ltime)
 	app.InfoLog = infoLog
-	
+
 	errorLog = log.New(os.Stderr, "ERROR\t", log.Ldate|log.Ltime|log.Lshortfile)
 	app.ErrorLog = errorLog
 
@@ -76,13 +78,15 @@ func run() error {
 	// Initialize env configuration
 	_ = config.NewEnvConfig()
 
-	//tc, err := render.CreateTemplateCache()
-	//if err != nil {
-	//	log.Fatal("cannot create template cache")
-	//	return nil, err
-	//}
-	//app.TemplateCache = tc
-	//render.NewRenderer(&app)
+	tc, err := render.CreateTemplateCache()
+	if err != nil {
+		log.Fatal("cannot create template cache")
+		return err
+	}
+	app.TemplateCache = tc
+	handlers.NewHandlers(&app)
+	handlers.NewAuthorizationHandlers(&app)
+	render.NewRenderer(&app)
 	helpers.NewHelpers(&app)
 
 	return nil
