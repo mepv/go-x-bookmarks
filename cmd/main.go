@@ -3,6 +3,11 @@ package main
 import (
 	"encoding/gob"
 	"flag"
+	"log"
+	"net/http"
+	"os"
+	"time"
+
 	"github.com/alexedwards/scs/v2"
 	"github.com/joho/godotenv"
 	"github.com/mepv/go-x-bookmarks/internal/config"
@@ -10,10 +15,6 @@ import (
 	"github.com/mepv/go-x-bookmarks/internal/helpers"
 	"github.com/mepv/go-x-bookmarks/internal/models"
 	"github.com/mepv/go-x-bookmarks/internal/render"
-	"log"
-	"net/http"
-	"os"
-	"time"
 )
 
 const portNumber = ":8080"

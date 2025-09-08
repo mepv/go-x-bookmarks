@@ -1,6 +1,7 @@
 .idea/
 .env
-main
+x-bookmarks-server
 /coverage/
 coverage.out
 coverage.html
+/data

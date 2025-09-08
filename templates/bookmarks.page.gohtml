@@ -7,16 +7,21 @@
 <body>
 {{$username := index .Data "username"}}
 <h1>Bookmarks for {{$username}}</h1>
+<p><em>🔄 Fetched fresh from X API and merged with stored bookmarks</em></p>
 <ul>
     {{$bookmarks := index .Data "bookmarks"}}
     {{range $bookmarks}}
         <li>
             <strong>{{.Text}}</strong>
             <br>
+            <small>ID: {{.ID}}</small>
         </li>
     {{else}}
         <li>No bookmarks found.</li>
     {{end}}
 </ul>
+<p>
+    <a href="/">← Back to Home</a>
+</p>
 </body>
 </html>

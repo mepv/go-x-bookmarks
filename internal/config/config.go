@@ -1,10 +1,11 @@
 package config
 
 import (
-	"github.com/alexedwards/scs/v2"
 	"html/template"
 	"log"
 	"os"
+
+	"github.com/alexedwards/scs/v2"
 )
 
 type AppConfig struct {
@@ -25,6 +26,7 @@ type EnvConfig struct {
 	UserInformationUri string
 	BookmarksUri       string
 	Scope              string
+	MaxResults         string
 }
 
 func NewEnvConfig() *EnvConfig {
@@ -37,6 +39,7 @@ func NewEnvConfig() *EnvConfig {
 		UserInformationUri: getEnv("USER_INFORMATION_URI", ""),
 		BookmarksUri:       getEnv("BOOKMARKS_URI", ""),
 		Scope:              getEnv("SCOPE", ""),
+		MaxResults:         getEnv("MAX_RESULTS", "10"),
 	}
 }
 
