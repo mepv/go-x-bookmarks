@@ -19,11 +19,14 @@ import (
 
 var app *config.AppConfig
 var bookmarkStorage *storage.BookmarkStorage
+var metadataStorage *storage.MetadataStorage
 
 func NewHandlers(a *config.AppConfig) {
 	app = a
-	// Initialize bookmark storage to save in data/bookmarks.txt
-	bookmarkStorage = storage.NewBookmarkStorage("data/bookmarks.txt")
+	// Initialize bookmark storage to save in data/bookmarks.json
+	bookmarkStorage = storage.NewBookmarkStorage("data/bookmarks.json")
+	// Initialize metadata storage to save in data/bookmarks-metadata.json
+	metadataStorage = storage.NewMetadataStorage("data/bookmarks-metadata.json")
 }
 
 func HomeHandler(w http.ResponseWriter, r *http.Request) {
@@ -92,9 +95,17 @@ func BookmarkHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Saved %d merged bookmarks to storage for user %s", len(bookmarks), username)
 	}
 
+	// Fetch tweet metadata for bookmarks
+	tweetMetadata, err := fetchTweetMetadataForBookmarks(accessToken, username, bookmarks)
+	if err != nil {
+		log.Printf("Error fetching tweet metadata: %v", err)
+		// Continue anyway - we can still show bookmarks without metadata
+	}
+
 	data := make(map[string]interface{})
 	data["bookmarks"] = bookmarks
 	data["username"] = username
+	data["metadata"] = tweetMetadata
 	err = render.Template(w, r, "bookmarks.page.gohtml", &models.TemplateData{
 		Data: data,
 	})
@@ -248,4 +259,61 @@ func getStoredBookmarkCount(storedBookmarks *storage.StoredBookmarks, username s
 		return 0
 	}
 	return len(storedBookmarks.Bookmarks)
+}
+
+// fetchTweetMetadataForBookmarks extracts tweet IDs from bookmarks and fetches metadata
+func fetchTweetMetadataForBookmarks(accessToken, username string, bookmarks []models.Bookmark) (map[string]models.TweetMetadata, error) {
+	if len(bookmarks) == 0 {
+		return make(map[string]models.TweetMetadata), nil
+	}
+
+	// Extract tweet IDs from bookmarks
+	var tweetIDs []string
+	for _, bookmark := range bookmarks {
+		tweetIDs = append(tweetIDs, bookmark.ID)
+	}
+
+	log.Printf("🐦 Extracting metadata for %d tweet IDs", len(tweetIDs))
+
+	// Load existing metadata
+	storedMetadata, err := metadataStorage.LoadMetadata()
+	if err != nil {
+		log.Printf("Error loading stored metadata: %v", err)
+		storedMetadata = &models.StoredTweetMetadata{
+			Username: username,
+			Metadata: make(map[string]models.TweetMetadata),
+		}
+	}
+
+	// Only fetch metadata for tweets we don't have yet
+	newMetadata, err := FetchMissingMetadata(accessToken, tweetIDs, storedMetadata.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch missing metadata: %w", err)
+	}
+
+	// Merge new metadata with existing metadata
+	allMetadata := storedMetadata.Metadata
+	for tweetID, metadata := range newMetadata {
+		allMetadata[tweetID] = metadata
+	}
+
+	// Save updated metadata to storage
+	if len(newMetadata) > 0 {
+		err = metadataStorage.SaveMetadata(username, allMetadata)
+		if err != nil {
+			log.Printf("Error saving updated metadata: %v", err)
+		} else {
+			log.Printf("✅ Saved metadata for %d tweets (%d new)", len(allMetadata), len(newMetadata))
+		}
+	}
+
+	// Return metadata only for the current bookmarks
+	result := make(map[string]models.TweetMetadata)
+	for _, tweetID := range tweetIDs {
+		if metadata, exists := allMetadata[tweetID]; exists {
+			result[tweetID] = metadata
+		}
+	}
+
+	return result, nil
 }

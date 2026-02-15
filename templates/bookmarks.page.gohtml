@@ -3,23 +3,69 @@
 <head>
     <meta charset="UTF-8">
     <title>Your Bookmarks</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+        .bookmark { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 8px; }
+        .tweet-text { font-size: 16px; margin-bottom: 10px; }
+        .metadata { color: #666; font-size: 14px; }
+        .author { color: #1da1f2; font-weight: bold; }
+        .metrics { margin-top: 5px; }
+        .metric { margin-right: 15px; }
+        .timestamp { color: #999; }
+    </style>
 </head>
 <body>
 {{$username := index .Data "username"}}
-<h1>Bookmarks for {{$username}}</h1>
+{{$metadata := index .Data "metadata"}}
+<h1>📚 Bookmarks for @{{$username}}</h1>
 <p><em>🔄 Fetched fresh from X API and merged with stored bookmarks</em></p>
-<ul>
-    {{$bookmarks := index .Data "bookmarks"}}
+
+{{$bookmarks := index .Data "bookmarks"}}
+{{if $bookmarks}}
     {{range $bookmarks}}
-        <li>
-            <strong>{{.Text}}</strong>
-            <br>
-            <small>ID: {{.ID}}</small>
-        </li>
-    {{else}}
-        <li>No bookmarks found.</li>
+        {{$tweetMeta := index $metadata .ID}}
+        <div class="bookmark">
+            <div class="tweet-text">{{.Text}}</div>
+            
+            {{if $tweetMeta}}
+                <div class="metadata">
+                    {{if $tweetMeta.Author}}
+                        <div class="author">👤 @{{$tweetMeta.Author.Username}} ({{$tweetMeta.Author.Name}})</div>
+                    {{end}}
+                    
+                    {{if not $tweetMeta.CreatedAt.IsZero}}
+                        <div class="timestamp">📅 {{$tweetMeta.CreatedAt.Format "Jan 2, 2006 at 3:04 PM"}}</div>
+                    {{end}}
+                    
+                    <div class="metrics">
+                        {{if gt $tweetMeta.PublicMetrics.LikeCount 0}}
+                            <span class="metric">❤️ {{$tweetMeta.PublicMetrics.LikeCount}} likes</span>
+                        {{end}}
+                        {{if gt $tweetMeta.PublicMetrics.RetweetCount 0}}
+                            <span class="metric">🔄 {{$tweetMeta.PublicMetrics.RetweetCount}} retweets</span>
+                        {{end}}
+                        {{if gt $tweetMeta.PublicMetrics.ReplyCount 0}}
+                            <span class="metric">💬 {{$tweetMeta.PublicMetrics.ReplyCount}} replies</span>
+                        {{end}}
+                    </div>
+                    
+                    {{if $tweetMeta.Lang}}
+                        <div class="timestamp">🌐 Language: {{$tweetMeta.Lang}}</div>
+                    {{end}}
+                </div>
+            {{else}}
+                <div class="metadata">
+                    <small>Tweet ID: {{.ID}} (metadata loading...)</small>
+                </div>
+            {{end}}
+        </div>
     {{end}}
-</ul>
+{{else}}
+    <div class="bookmark">
+        <div class="tweet-text">No bookmarks found.</div>
+    </div>
+{{end}}
+
 <p>
     <a href="/">← Back to Home</a>
 </p>
