@@ -1,6 +1,7 @@
 package config
 
 import (
+	"database/sql"
 	"html/template"
 	"log"
 	"os"
@@ -15,6 +16,7 @@ type AppConfig struct {
 	ErrorLog      *log.Logger
 	InProduction  bool
 	Session       *scs.SessionManager
+	DB            *sql.DB
 }
 
 type EnvConfig struct {
@@ -27,6 +29,8 @@ type EnvConfig struct {
 	BookmarksUri       string
 	Scope              string
 	MaxResults         string
+	DatabaseURL        string
+	DatabaseDriver     string
 }
 
 func NewEnvConfig() *EnvConfig {
@@ -40,6 +44,8 @@ func NewEnvConfig() *EnvConfig {
 		BookmarksUri:       getEnv("BOOKMARKS_URI", ""),
 		Scope:              getEnv("SCOPE", ""),
 		MaxResults:         getEnv("MAX_RESULTS", "10"),
+		DatabaseURL:        getEnv("DATABASE_URL", ""),
+		DatabaseDriver:     getEnv("DATABASE_DRIVER", "postgres"),
 	}
 }
 
