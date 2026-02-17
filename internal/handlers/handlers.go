@@ -1,12 +1,15 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,11 +18,13 @@ import (
 	"github.com/mepv/go-x-bookmarks/internal/models"
 	"github.com/mepv/go-x-bookmarks/internal/render"
 	"github.com/mepv/go-x-bookmarks/internal/storage"
+	storagepostgres "github.com/mepv/go-x-bookmarks/internal/storage/postgres"
 )
 
 var app *config.AppConfig
 var bookmarkStorage *storage.BookmarkStorage
 var metadataStorage *storage.MetadataStorage
+var postgresRepos *storagepostgres.Repositories
 
 func NewHandlers(a *config.AppConfig) {
 	app = a
@@ -27,6 +32,10 @@ func NewHandlers(a *config.AppConfig) {
 	bookmarkStorage = storage.NewBookmarkStorage("data/bookmarks.json")
 	// Initialize metadata storage to save in data/bookmarks-metadata.json
 	metadataStorage = storage.NewMetadataStorage("data/bookmarks-metadata.json")
+
+	if app.DB != nil {
+		postgresRepos = storagepostgres.NewRepositories(app.DB)
+	}
 }
 
 func HomeHandler(w http.ResponseWriter, r *http.Request) {
@@ -62,44 +71,80 @@ func BookmarkHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userResp, err := fetchUserInformation(accessToken, username)
+	userResp, userRecord, err := resolveUserInformation(r.Context(), accessToken, username)
 	if err != nil {
 		log.Printf("Error fetching user information: %v", err)
 		helpers.ServerError(w, err)
 		return
 	}
 
+	if usingPostgresOperationalStore() && userRecord != nil {
+		if err := postgresRepos.SyncState.MarkSyncAttempt(r.Context(), userRecord.ID, time.Now().UTC(), nil); err != nil {
+			log.Printf("failed to mark sync attempt for user_id=%d: %v", userRecord.ID, err)
+		}
+	}
+
 	// Fetch fresh bookmarks from API
 	apiBookmarks, err := fetchBookmarks(accessToken, userResp.Data)
 	if err != nil {
 		log.Printf("Error fetching bookmarks from API: %v", err)
+		if usingPostgresOperationalStore() && userRecord != nil {
+			errMsg := err.Error()
+			if syncErr := postgresRepos.SyncState.MarkSyncAttempt(r.Context(), userRecord.ID, time.Now().UTC(), &errMsg); syncErr != nil {
+				log.Printf("failed to persist sync error for user_id=%d: %v", userRecord.ID, syncErr)
+			}
+		}
 		helpers.ServerError(w, err)
 		return
 	}
 
-	// Load existing bookmarks from storage
-	storedBookmarks, err := bookmarkStorage.LoadBookmarks()
-	if err != nil {
-		log.Printf("Error loading stored bookmarks: %v", err)
-		storedBookmarks = nil // Continue with empty stored bookmarks
+	bookmarks := apiBookmarks
+	if !usingPostgresOperationalStore() {
+		// Load existing bookmarks from storage
+		storedBookmarks, loadErr := bookmarkStorage.LoadBookmarks()
+		if loadErr != nil {
+			log.Printf("Error loading stored bookmarks: %v", loadErr)
+			storedBookmarks = nil // Continue with empty stored bookmarks
+		}
+
+		// Merge API bookmarks with stored bookmarks (deduplicate)
+		bookmarks = mergeBookmarks(storedBookmarks, apiBookmarks, username)
+
+		// Save merged bookmarks to storage
+		saveErr := bookmarkStorage.SaveBookmarks(username, bookmarks)
+		if saveErr != nil {
+			log.Printf("Error saving merged bookmarks to storage: %v", saveErr)
+		} else {
+			log.Printf("Saved %d merged bookmarks to storage for user %s", len(bookmarks), username)
+		}
 	}
 
-	// Merge API bookmarks with stored bookmarks (deduplicate)
-	bookmarks := mergeBookmarks(storedBookmarks, apiBookmarks, username)
-
-	// Save merged bookmarks to storage
-	err = bookmarkStorage.SaveBookmarks(username, bookmarks)
-	if err != nil {
-		log.Printf("Error saving merged bookmarks to storage: %v", err)
-	} else {
-		log.Printf("Saved %d merged bookmarks to storage for user %s", len(bookmarks), username)
+	tweetMetadata := make(map[string]models.TweetMetadata)
+	if !usingPostgresOperationalStore() {
+		// Fetch tweet metadata for bookmarks
+		tweetMetadata, err = fetchTweetMetadataForBookmarks(accessToken, username, bookmarks)
+		if err != nil {
+			log.Printf("Error fetching tweet metadata: %v", err)
+			// Continue anyway - we can still show bookmarks without metadata
+		}
 	}
 
-	// Fetch tweet metadata for bookmarks
-	tweetMetadata, err := fetchTweetMetadataForBookmarks(accessToken, username, bookmarks)
-	if err != nil {
-		log.Printf("Error fetching tweet metadata: %v", err)
-		// Continue anyway - we can still show bookmarks without metadata
+	if usingPostgresOperationalStore() && userRecord != nil {
+		now := time.Now().UTC()
+		var lastSeenTweetID *string
+		if len(bookmarks) > 0 {
+			lastSeenTweetID = &bookmarks[0].ID
+		}
+
+		_, syncErr := postgresRepos.SyncState.Upsert(r.Context(), &storagepostgres.UserSyncState{
+			UserID:             userRecord.ID,
+			LastSeenTweetID:    lastSeenTweetID,
+			LastSyncAt:         &now,
+			LastSuccessfulSync: &now,
+		})
+		if syncErr != nil {
+			log.Printf("failed to upsert sync state for user_id=%d: %v", userRecord.ID, syncErr)
+		}
 	}
 
 	data := make(map[string]interface{})
@@ -158,6 +203,81 @@ func fetchUserInformation(accessToken string, username string) (*models.UserResp
 		return nil, fmt.Errorf("failed to parse API response JSON: %w", err)
 	}
 	return &userResp, nil
+}
+
+func resolveUserInformation(ctx context.Context, accessToken, username string) (*models.UserResponse, *storagepostgres.UserRecord, error) {
+	if postgresRepos == nil {
+		userResp, err := fetchUserInformation(accessToken, username)
+		return userResp, nil, err
+	}
+
+	cachedUser, err := postgresRepos.Users.GetByUsername(ctx, username)
+	if err != nil && !errors.Is(err, storagepostgres.ErrNotFound) {
+		log.Printf("failed to read user cache for username=%s: %v", username, err)
+		return fetchUserInformationAndRefreshCache(ctx, accessToken, username)
+	}
+
+	now := time.Now().UTC()
+	if err == nil && cachedUser.MetadataExpiresAt.After(now) {
+		log.Printf("Cache hit for user=%s (expires_at=%s)", username, cachedUser.MetadataExpiresAt.Format(time.RFC3339))
+		return &models.UserResponse{
+			Data: models.User{
+				ID:       cachedUser.XUserID,
+				Name:     cachedUser.DisplayName,
+				Username: cachedUser.Username,
+			},
+		}, cachedUser, nil
+	}
+
+	return fetchUserInformationAndRefreshCache(ctx, accessToken, username)
+}
+
+func fetchUserInformationAndRefreshCache(ctx context.Context, accessToken, username string) (*models.UserResponse, *storagepostgres.UserRecord, error) {
+	userResp, err := fetchUserInformation(accessToken, username)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if postgresRepos == nil {
+		return userResp, nil, nil
+	}
+
+	now := time.Now().UTC()
+	ttl := getUserCacheTTL()
+	updatedRecord, upsertErr := postgresRepos.Users.Upsert(ctx, &storagepostgres.UserRecord{
+		XUserID:           userResp.Data.ID,
+		Username:          userResp.Data.Username,
+		DisplayName:       userResp.Data.Name,
+		MetadataFetchedAt: now,
+		MetadataExpiresAt: now.Add(ttl),
+	})
+	if upsertErr != nil {
+		log.Printf("failed to upsert user cache for username=%s x_user_id=%s: %v", userResp.Data.Username, userResp.Data.ID, upsertErr)
+		return userResp, nil, nil
+	}
+
+	return userResp, updatedRecord, nil
+}
+
+func getUserCacheTTL() time.Duration {
+	const defaultTTLMinutes = 60
+
+	ttlStr := strings.TrimSpace(os.Getenv("USER_CACHE_TTL_MINUTES"))
+	if ttlStr == "" {
+		return time.Duration(defaultTTLMinutes) * time.Minute
+	}
+
+	ttlMinutes, err := strconv.Atoi(ttlStr)
+	if err != nil || ttlMinutes <= 0 {
+		log.Printf("invalid USER_CACHE_TTL_MINUTES=%q, falling back to %d minutes", ttlStr, defaultTTLMinutes)
+		return time.Duration(defaultTTLMinutes) * time.Minute
+	}
+
+	return time.Duration(ttlMinutes) * time.Minute
+}
+
+func usingPostgresOperationalStore() bool {
+	return postgresRepos != nil
 }
 
 func fetchBookmarks(accessToken string, user models.User) ([]models.Bookmark, error) {
